@@ -37,6 +37,7 @@ under the License.
 	<!-- Allow users to pass custom jcuda versions -->
 	<properties>
 		<jcuda.version>10.0.0</jcuda.version>
+		<junit.version>4.12</junit.version>
 	</properties>
 
 	<dependencies>
@@ -120,6 +121,13 @@ under the License.
 			</exclusions>
 		</dependency>
 
+		<!-- https://mvnrepository.com/artifact/junit/junit -->
+		<dependency>
+			<groupId>junit</groupId>
+			<artifactId>junit</artifactId>
+			<version>${junit.version}</version>
+			<scope>provided</scope>
+		</dependency>
     </dependencies>
 
 	<build>

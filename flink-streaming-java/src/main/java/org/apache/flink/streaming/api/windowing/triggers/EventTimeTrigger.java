@@ -37,10 +37,11 @@ public class EventTimeTrigger extends Trigger<Object, TimeWindow> {
     public TriggerResult onElement(
             Object element, long timestamp, TimeWindow window, TriggerContext ctx)
             throws Exception {
+        // 如果窗口的最大时间戳小于等于当前的watermark，那么就返回窗口触发状态
         if (window.maxTimestamp() <= ctx.getCurrentWatermark()) {
             // if the watermark is already past the window fire immediately
             return TriggerResult.FIRE;
-        } else {
+        } else { // 如果窗口的最大时间戳大于当前的watermark，那么就注册事件时间定时器，并返回窗口不触发状态
             ctx.registerEventTimeTimer(window.maxTimestamp());
             return TriggerResult.CONTINUE;
         }

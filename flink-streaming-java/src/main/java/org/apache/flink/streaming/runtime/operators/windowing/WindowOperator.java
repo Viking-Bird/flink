@@ -137,9 +137,9 @@ public class WindowOperator<K, IN, ACC, OUT, W extends Window>
      */
     protected final OutputTag<IN> lateDataOutputTag;
 
-    private static final String LATE_ELEMENTS_DROPPED_METRIC_NAME = "numLateRecordsDropped";
+    private static final String LATE_ELEMENTS_DROPPED_METRIC_NAME = "numLateRecordsDropped"; // 需要丢掉的延迟数据监控指标
 
-    protected transient Counter numLateRecordsDropped;
+    protected transient Counter numLateRecordsDropped; // 保存需要丢掉的延迟数据数量，给监控指标 numLateRecordsDropped 用
 
     // ------------------------------------------------------------------------
     // State that is not checkpointed
@@ -220,8 +220,10 @@ public class WindowOperator<K, IN, ACC, OUT, W extends Window>
         super.open();
 
         this.numLateRecordsDropped = metrics.counter(LATE_ELEMENTS_DROPPED_METRIC_NAME);
+        // 创建一个基于时间戳的数据收集器，用于输出窗口数据到下游
         timestampedCollector = new TimestampedCollector<>(output);
 
+        // 获取时间服务，用于向windowAssignerContext传递当前的processing time
         internalTimerService = getInternalTimerService("window-timers", windowSerializer, this);
 
         triggerContext = new Context(null, null);
@@ -237,6 +239,7 @@ public class WindowOperator<K, IN, ACC, OUT, W extends Window>
 
         // create (or restore) the state that hold the actual window contents
         // NOTE - the state may be null in the case of the overriding evicting window operator
+        // 创建windowState，用于储存窗口中的数据
         if (windowStateDescriptor != null) {
             windowState =
                     (InternalAppendingState<K, W, IN, ACC, ACC>)
@@ -296,6 +299,11 @@ public class WindowOperator<K, IN, ACC, OUT, W extends Window>
         windowAssignerContext = null;
     }
 
+    /**
+     * 新元素进入window的时候调用
+     * @param element
+     * @throws Exception
+     */
     @Override
     public void processElement(StreamRecord<IN> element) throws Exception {
         final Collection<W> elementWindows =
@@ -303,8 +311,11 @@ public class WindowOperator<K, IN, ACC, OUT, W extends Window>
                         element.getValue(), element.getTimestamp(), windowAssignerContext);
 
         // if element is handled by none of assigned elementWindows
+        // 返回元素是否被处理，如果元素经过处理，返回false
         boolean isSkippedElement = true;
 
+        // 此处获取到key的值，即keyBy方法字段的值
+        // 该KeyedStateBackend在StreamTaskStateInitializerImpl中创建
         final K key = this.<K>getKeyedStateBackend().getCurrentKey();
 
         if (windowAssigner instanceof MergingWindowAssigner) {
@@ -413,30 +424,40 @@ public class WindowOperator<K, IN, ACC, OUT, W extends Window>
             for (W window : elementWindows) {
 
                 // drop if the window is already late
+                // 不处理延迟数据
                 if (isWindowLate(window)) {
                     continue;
                 }
                 isSkippedElement = false;
 
+                // windowState为HeapListState
+                // HeapListState为内存中存储的分区化的链表状态(ListState)，使用namespace区分不同窗口的数据。可以理解为一个Map，key为window对象，value为元素的值
                 windowState.setCurrentNamespace(window);
                 windowState.add(element.getValue());
 
+                // 设置trigger上下文对象的key和window
                 triggerContext.key = key;
                 triggerContext.window = window;
 
+                // 调用trigger的onElement方法，询问trigger新element到来的时候需要作出什么动作。
                 TriggerResult triggerResult = triggerContext.onElement(element);
 
+                // isFire表示需要触发计算
                 if (triggerResult.isFire()) {
+                    // 取出windowState当前namespace下所有的元素。即当前window下所有的元素。
                     ACC contents = windowState.get();
                     if (contents == null) {
                         continue;
                     }
+                    // 使用用户传入的处理函数来计算window内数据，稍后分析
                     emitWindowContents(window, contents);
                 }
 
+                // 如果触发器返回需要清空数据，则删除window中所有的数据
                 if (triggerResult.isPurge()) {
                     windowState.clear();
                 }
+                // 注册timer，当前时间已经过了window的cleanup时间（后面有cleanup time的含义），会根据窗口的类型调用对应的onProcessingTime方法或者是onEventTime方法
                 registerCleanupTimer(window);
             }
         }
@@ -446,6 +467,8 @@ public class WindowOperator<K, IN, ACC, OUT, W extends Window>
         // late arriving tag has been set
         // windowAssigner is event time and current timestamp + allowed lateness no less than
         // element timestamp
+        // 如果元素没有被window处理，并且元素来迟，会加入到旁路输出
+        // 否则此数据被丢弃，迟到被丢弃数据条数监控会增加1
         if (isSkippedElement && isElementLate(element)) {
             if (lateDataOutputTag != null) {
                 sideOutput(element);
@@ -480,6 +503,7 @@ public class WindowOperator<K, IN, ACC, OUT, W extends Window>
 
         TriggerResult triggerResult = triggerContext.onEventTime(timer.getTimestamp());
 
+        // 此处为触发计算的逻辑
         if (triggerResult.isFire()) {
             ACC contents = windowState.get();
             if (contents != null) {
@@ -487,10 +511,12 @@ public class WindowOperator<K, IN, ACC, OUT, W extends Window>
             }
         }
 
+        // 如果触发了purge操作，则清空window中的内容
         if (triggerResult.isPurge()) {
             windowState.clear();
         }
 
+        // 如果是event time类型，并且定时器触发时间是window的cleanup时间的时候，意味着该窗口的数据已经处理完毕，需要清除该窗口的所有状态
         if (windowAssigner.isEventTime()
                 && isCleanupTime(triggerContext.window, timer.getTimestamp())) {
             clearAllState(triggerContext.window, windowState, mergingWindows);
@@ -574,6 +600,8 @@ public class WindowOperator<K, IN, ACC, OUT, W extends Window>
     private void emitWindowContents(W window, ACC contents) throws Exception {
         timestampedCollector.setAbsoluteTimestamp(window.maxTimestamp());
         processContext.window = window;
+        // 此处调用用户编写的处理函数
+        // 此处用户的函数，比如ProcessWindowFunction被InternalIterableProcessWindowFunction包装了
         userFunction.process(
                 triggerContext.key, window, processContext, contents, timestampedCollector);
     }
@@ -606,11 +634,14 @@ public class WindowOperator<K, IN, ACC, OUT, W extends Window>
      * the given window.
      */
     protected boolean isWindowLate(W window) {
+        // 如果window类型为eventtime并且window的cleanup时间比当前watermark早，说明window已经迟到
         return (windowAssigner.isEventTime()
                 && (cleanupTime(window) <= internalTimerService.currentWatermark()));
     }
 
     /**
+     * 基于watermark和迟到数据时间来判断数据是否延迟
+     *
      * Decide if a record is currently late, based on current watermark and allowed lateness.
      *
      * @param element The element to check
@@ -660,6 +691,8 @@ public class WindowOperator<K, IN, ACC, OUT, W extends Window>
     }
 
     /**
+     * 获取窗口的清除时间
+     *
      * Returns the cleanup time for a window, which is {@code window.maxTimestamp +
      * allowedLateness}. In case this leads to a value greater than {@link Long#MAX_VALUE} then a
      * cleanup time of {@link Long#MAX_VALUE} is returned.
@@ -668,6 +701,7 @@ public class WindowOperator<K, IN, ACC, OUT, W extends Window>
      */
     private long cleanupTime(W window) {
         if (windowAssigner.isEventTime()) {
+            // cleanup time为window的end时间 + 允许迟到的时间
             long cleanupTime = window.maxTimestamp() + allowedLateness;
             return cleanupTime >= window.maxTimestamp() ? cleanupTime : Long.MAX_VALUE;
         } else {
@@ -816,6 +850,8 @@ public class WindowOperator<K, IN, ACC, OUT, W extends Window>
     }
 
     /**
+     * Trigger操作工具类
+     *
      * {@code Context} is a utility for handling {@code Trigger} invocations. It can be reused by
      * setting the {@code key} and {@code window} fields. No internal state must be kept in the
      * {@code Context}
