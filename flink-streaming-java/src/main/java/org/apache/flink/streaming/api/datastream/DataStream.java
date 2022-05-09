@@ -1194,6 +1194,8 @@ public class DataStream<T> {
         // read the output type of the input Transform to coax out errors about MissingTypeInfo
         transformation.getOutputType();
 
+        // 构造新的transformation
+        // map类型的transformation只有一个输入，因此它输入OneInputTransformation
         OneInputTransformation<T, R> resultTransform =
                 new OneInputTransformation<>(
                         this.transformation,
@@ -1203,9 +1205,12 @@ public class DataStream<T> {
                         environment.getParallelism());
 
         @SuppressWarnings({"unchecked", "rawtypes"})
+        // 构造返回的stream，供后续的算子链式调用
         SingleOutputStreamOperator<R> returnStream =
                 new SingleOutputStreamOperator(environment, resultTransform);
 
+        // 将transformation写入ExecutionEnvironment中
+        // ExecutionEnvironment维护了一个叫做transformations的ArrayList对象，用于储存所有的transformation
         getExecutionEnvironment().addOperator(resultTransform);
 
         return returnStream;

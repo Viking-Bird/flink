@@ -4,6 +4,7 @@ import org.apache.commons.lang3.time.DateFormatUtils
 import org.apache.flink.api.common.eventtime.{SerializableTimestampAssigner, WatermarkStrategy}
 import org.apache.flink.api.common.functions.{AggregateFunction, ReduceFunction}
 import org.apache.flink.api.scala._
+import org.apache.flink.streaming.api.functions.ProcessFunction
 import org.apache.flink.streaming.api.functions.timestamps.BoundedOutOfOrdernessTimestampExtractor
 import org.apache.flink.streaming.api.scala.function.ProcessWindowFunction
 import org.apache.flink.streaming.api.scala.{OutputTag, StreamExecutionEnvironment}
@@ -50,6 +51,10 @@ class WindowFunctionTest {
   def reduceFuncTest: Unit = {
     val text = env.fromCollection(DATA)
     val reduceStream = text
+
+      /**
+       * map、filter这些算子都会被封装成StreamGraph，添加到StreamExecutionEnvironment的transformations List集合中
+       * */
       .map(r => r.split(","))
       .filter(_.nonEmpty)
       .map(p => Tuple3[String, Int, Long](p(0), p(1).toInt, p(2).toLong))

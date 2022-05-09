@@ -192,6 +192,7 @@ public class StreamGraphGenerator {
 
     // Keep track of which Transforms we have already transformed, this is necessary because
     // we have loops, i.e. feedback edges.
+    // 储存已经被处理的transformation
     private Map<Transformation<?>, Collection<Integer>> alreadyTransformed;
 
     public StreamGraphGenerator(
@@ -295,6 +296,7 @@ public class StreamGraphGenerator {
             setBatchStateBackendAndTimerService(graph);
         } else {
             graph.setStateBackend(stateBackend);
+            // 设置调度方式，决定task延迟调度还是立刻调度
             graph.setScheduleMode(ScheduleMode.EAGER);
 
             if (checkpointConfig.isApproximateLocalRecoveryEnabled()) {
@@ -369,12 +371,14 @@ public class StreamGraphGenerator {
      * delegates to one of the transformation specific methods.
      */
     private Collection<Integer> transform(Transformation<?> transform) {
+        // 检查该transformation是否已被处理，如果已处理直接返回
         if (alreadyTransformed.containsKey(transform)) {
             return alreadyTransformed.get(transform);
         }
 
         LOG.debug("Transforming " + transform);
 
+        // 如果transformation的最大并行度没有设置，全局的最大并行度已设置，将全局最大并行度设置给transformation
         if (transform.getMaxParallelism() <= 0) {
 
             // if the max parallelism hasn't been set, then first use the job wide max parallelism
@@ -386,6 +390,7 @@ public class StreamGraphGenerator {
         }
 
         // call at least once to trigger exceptions about MissingTypeInfo
+        // 检查transformation的输出类型，如果是MissingTypeInfo则程序抛出异常
         transform.getOutputType();
 
         @SuppressWarnings("unchecked")
